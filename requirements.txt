@@ -1,0 +1,9 @@
+# DHN - Cuentas Corrientes
+# pip install -r requirements.txt
+
+# Para leer PDFs (alternativa a pdftotext si no está disponible)
+pypdf>=4.0.0
+
+# Para procesamiento de datos (opcional, solo si se quiere ampliar el script)
+# pandas>=2.0.0
+# openpyxl>=3.1.0

@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""
+DHN - Actualizador de Cuentas Corrientes
+Uso: python actualizar.py NOMBRE_DEL_PDF.pdf
+Genera: index.html listo para subir a Netlify
+"""
+
+import sys
+import re
+import json
+import subprocess
+from datetime import datetime, date
+from pathlib import Path
+
+# ── CONFIG ──────────────────────────────────────────────────────────────────
+CUTOFF_NC_ALERT = date(2024, 6, 1)   # NC anteriores a esta fecha → alerta
+OUTPUT_HTML     = Path("index.html")
+# ────────────────────────────────────────────────────────────────────────────
+
+def extraer_texto(pdf_path: str) -> str:
+    """Extrae el texto del PDF preservando el layout."""
+    result = subprocess.run(
+        ["pdftotext", "-layout", pdf_path, "-"],
+        capture_output=True, text=True, encoding="utf-8"
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Error al leer el PDF: {result.stderr}")
+    return result.stdout
+
+
+def parsear_clientes(raw: str, hoy: date) -> tuple[list, dict]:
+    """Parsea el texto extraído y devuelve (clientes, totales)."""
+    client_blocks = re.split(r'\n(?=\s*\d+ - .+?Total General:)', raw)
+
+    line_re = re.compile(
+        r'(\d{4}-\d{2}-\d{2})\s+(\S+)\s+(\d+)\s+'
+        r'(FAC-[AB]|NCR-[AB]|NDB-[AB]|DAJ|CAJ|COB-R)\s+'
+        r'(\S+)\s+([A-Z0-9]+)\s+'
+        r'\$\s*([\-\d.,]+)\s+\$\s*([\-\d.,]+)\s+(\d*)\s*'
+    )
+
+    clientes = []
+    for block in client_blocks:
+        hdr = re.search(r'(\d+) - (.+?)\s{3,}.*?Total General:\s*\$\s*([\d.,\-]+)', block)
+        if not hdr:
+            continue
+        cod   = hdr.group(1).strip()
+        nombre = hdr.group(2).strip()
+        total_str = hdr.group(3).replace('.', '').replace(',', '.')
+        try:
+            total_general = float(total_str)
+        except ValueError:
+            continue
+
+        cond_pagos = re.findall(r'\b(CON|07D|14D|21D|30D|45D|60D|90D)\b', block)
+        cond_pago  = max(set(cond_pagos), key=cond_pagos.count) if cond_pagos else '-'
+
+        movs = []
+        for m in line_re.finditer(block):
+            importe_str = m.group(7).replace('.', '').replace(',', '.')
+            try:
+                importe = float(importe_str)
+            except ValueError:
+                continue
+            movs.append({
+                'fechaComp':  m.group(1),
+                'fechaVenc':  m.group(2),
+                'tipo':       m.group(4),
+                'nro':        m.group(5),
+                'condPago':   m.group(6),
+                'importe':    round(importe, 2),
+                'diasVenc':   int(m.group(9)) if m.group(9) else 0,
+            })
+
+        facturas  = [m for m in movs if m['tipo'].startswith('FAC')]
+        ncs       = [m for m in movs if m['tipo'].startswith('NCR') or m['tipo'].startswith('NDB')]
+
+        vencidas   = sorted([f for f in facturas if f['diasVenc'] > 0], key=lambda x: -x['diasVenc'])
+        por_vencer = sorted([f for f in facturas if f['diasVenc'] == 0], key=lambda x: x['fechaVenc'])
+
+        for n in ncs:
+            n['antigua'] = datetime.strptime(n['fechaComp'][:10], '%Y-%m-%d').date() < CUTOFF_NC_ALERT
+
+        nc_alertas = [n for n in ncs if n['antigua']]
+
+        total_nc       = sum(n['importe'] for n in ncs)
+        saldo_venc_neto = round(sum(f['importe'] for f in vencidas) + total_nc, 2)
+        max_dias       = max((f['diasVenc'] for f in vencidas), default=0)
+
+        # Score de prioridad
+        score = 0
+        if saldo_venc_neto > 20_000_000: score += 50
+        elif saldo_venc_neto > 10_000_000: score += 40
+        elif saldo_venc_neto > 5_000_000: score += 30
+        elif saldo_venc_neto > 2_000_000: score += 20
+        elif saldo_venc_neto > 500_000:   score += 10
+        if max_dias > 60: score += 30
+        elif max_dias > 45: score += 20
+        elif max_dias > 30: score += 10
+        nc_n = len(nc_alertas)
+        if nc_n > 20: score += 20
+        elif nc_n > 10: score += 15
+        elif nc_n > 0: score += 5
+
+        # Fecha vencido más antigua
+        venc_fechas = [
+            datetime.strptime(f['fechaVenc'][:10], '%Y-%m-%d').date()
+            for f in vencidas if f['fechaVenc'] != '0001-01-01'
+        ]
+        vencido_desde = min(venc_fechas).strftime('%d-%m-%Y') if venc_fechas else None
+
+        clientes.append({
+            'cod':             cod,
+            'nombre':          nombre,
+            'totalGeneral':    round(total_general, 2),
+            'condPago':        cond_pago,
+            'totalNC':         round(total_nc, 2),
+            'saldoVencidoNeto': saldo_venc_neto,
+            'maxDiasVenc':     max_dias,
+            'vencidoDesde':    vencido_desde,
+            'prioScore':       score,
+            'vencidas':        vencidas,
+            'porVencer':       por_vencer,
+            'ncAlertas':       nc_alertas,
+            'ncs':             ncs,
+        })
+
+    totales = {
+        'clientes':         len(clientes),
+        'conVencido':       sum(1 for c in clientes if c['saldoVencidoNeto'] > 0),
+        'conPorVencer':     sum(1 for c in clientes if c['porVencer']),
+        'conNcAlerta':      sum(1 for c in clientes if c['ncAlertas']),
+        'totalVencidoNeto': round(sum(c['saldoVencidoNeto'] for c in clientes if c['saldoVencidoNeto'] > 0), 2),
+        'totalPorVencer':   round(sum(f['importe'] for c in clientes for f in c['porVencer']), 2),
+        'totalNC':          round(sum(c['totalNC'] for c in clientes), 2),
+        'fecha':            hoy.strftime('%Y-%m-%d'),
+    }
+    return clientes, totales
+
+
+def generar_html(clientes: list, totales: dict, fecha_reporte: str) -> str:
+    """Lee el template de build_pdf_grid.py y genera el HTML final."""
+    data_json = json.dumps({'clientes': clientes, 'totales': totales}, ensure_ascii=False)
+
+    # Lee el script builder y extrae el template HTML
+    build_script = Path(__file__).parent / "build_pdf_grid.py"
+    exec_globals = {}
+    # Reemplaza la data embebida con la nueva
+    with open(build_script, encoding='utf-8') as f:
+        build_src = f.read()
+
+    # Actualiza fecha en el HTML
+    build_src_mod = re.sub(r'DHN Distribuciones · Reporte al \d{2}-\d{2}-\d{4}',
+                           f'DHN Distribuciones · Reporte al {datetime.strptime(fecha_reporte, "%Y-%m-%d").strftime("%d-%m-%Y")}',
+                           build_src)
+    build_src_mod = re.sub(r"'fecha': '\d{4}-\d{2}-\d{2}'",
+                           f"'fecha': '{fecha_reporte}'", build_src_mod)
+
+    # Ejecuta el script builder con la nueva data
+    import io, contextlib
+    import importlib.util, types
+
+    # Patch: intercept open() for grid_data.json to serve our data
+    import builtins
+    orig_open = builtins.open
+
+    class FakeFile:
+        def __init__(self): self._data = data_json.encode()
+        def read(self): return data_json
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+
+    def patched_open(path, *args, **kwargs):
+        if str(path) == 'pdf_data.json':
+            return FakeFile()
+        return orig_open(path, *args, **kwargs)
+
+    builtins.open = patched_open
+    try:
+        captured = io.StringIO()
+        with contextlib.redirect_stdout(captured):
+            exec(compile(build_src_mod, build_script, 'exec'), {'__file__': str(build_script)})
+    finally:
+        builtins.open = orig_open
+
+    # Lee el HTML generado
+    html_out = OUTPUT_HTML.read_text(encoding='utf-8')
+    return html_out
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Uso: python actualizar.py RUTA_AL_PDF.pdf")
+        sys.exit(1)
+
+    pdf_path = sys.argv[1]
+    if not Path(pdf_path).exists():
+        print(f"❌ No se encontró el archivo: {pdf_path}")
+        sys.exit(1)
+
+    hoy = date.today()
+    print(f"📄 Leyendo PDF: {pdf_path}")
+    raw = extraer_texto(pdf_path)
+
+    print("⚙️  Procesando clientes...")
+    clientes, totales = parsear_clientes(raw, hoy)
+
+    print(f"✅ {totales['clientes']} clientes · {totales['conVencido']} con vencido · {totales['conNcAlerta']} con NC antiguas")
+    print(f"💰 Total vencido neto: ${totales['totalVencidoNeto']:,.2f}")
+
+    print("🔨 Generando HTML...")
+    generar_html(clientes, totales, hoy.strftime('%Y-%m-%d'))
+
+    print(f"\n✅ Listo → {OUTPUT_HTML.resolve()}")
+    print("📤 Subí ese archivo a Netlify y el dashboard se actualiza.")
+
+
+if __name__ == "__main__":
+    main()
