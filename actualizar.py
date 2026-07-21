@@ -49,7 +49,10 @@ def extraer_texto(pdf_path: str) -> str:
 def parsear_clientes(raw: str, hoy: date, cond_pago_map: dict) -> tuple[list, dict]:
     """Parsea el texto extraído y devuelve (clientes, totales)."""
     cutoff_nc_alert = date(hoy.year, hoy.month, 1)   # NC del mes anterior o más viejas → alerta
-    client_blocks = re.split(r'\n(?=\s*\d+ - .+?Total General:)', raw)
+    # El corte de bloque solo depende del inicio "NNN - " en la línea: cuando el
+    # nombre del cliente es largo y se parte en dos líneas, "Total General:" queda
+    # en la línea siguiente, no en la misma, así que no puede exigirse acá.
+    client_blocks = re.split(r'\n(?=\s*\d+ - )', raw)
 
     line_re = re.compile(
         r'(\d{4}-\d{2}-\d{2})\s+(\S+)\s+(\d+)\s+'
@@ -60,16 +63,30 @@ def parsear_clientes(raw: str, hoy: date, cond_pago_map: dict) -> tuple[list, di
 
     clientes = []
     for block in client_blocks:
-        hdr = re.search(r'(\d+) - (.+?)\s{3,}.*?Total General:\s*\$\s*([\d.,\-]+)', block)
+        hdr = re.search(r'^\s*(\d+) - ([^\n]*)', block, re.MULTILINE)
         if not hdr:
             continue
-        cod   = hdr.group(1).strip()
-        nombre = hdr.group(2).strip()
-        total_str = hdr.group(3).replace('.', '').replace(',', '.')
+        cod = hdr.group(1).strip()
+        name_line1 = hdr.group(2)
+
+        total_m = re.search(r'Total General:\s*\$\s*([\d.,\-]+)', block)
+        if not total_m:
+            continue
+        total_str = total_m.group(1).replace('.', '').replace(',', '.')
         try:
             total_general = float(total_str)
         except ValueError:
             continue
+
+        nombre = re.split(r'\s{3,}', name_line1)[0].strip()
+        if 'Total General:' not in name_line1:
+            # Nombre partido en dos líneas: la continuación viene justo
+            # después de la línea con "Total General:".
+            cont_m = re.search(r'Total General:[^\n]*\n([^\n]*)', block)
+            if cont_m:
+                cont = re.split(r'\s{3,}', cont_m.group(1))[0].strip()
+                if cont and not re.match(r'^\d', cont):
+                    nombre = f'{nombre} {cont}'.strip()
 
         cond_pago = cond_pago_map.get(cod)
         if not cond_pago:
