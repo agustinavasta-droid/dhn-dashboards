@@ -13,7 +13,6 @@ from datetime import datetime, date
 from pathlib import Path
 
 # ── CONFIG ──────────────────────────────────────────────────────────────────
-CUTOFF_NC_ALERT = date(2024, 6, 1)   # NC anteriores a esta fecha → alerta
 OUTPUT_HTML     = Path("index.html")
 CLIENTES_XLSX   = Path(__file__).parent / "cliente.xlsx"
 # ────────────────────────────────────────────────────────────────────────────
@@ -49,6 +48,7 @@ def extraer_texto(pdf_path: str) -> str:
 
 def parsear_clientes(raw: str, hoy: date, cond_pago_map: dict) -> tuple[list, dict]:
     """Parsea el texto extraído y devuelve (clientes, totales)."""
+    cutoff_nc_alert = date(hoy.year, hoy.month, 1)   # NC del mes anterior o más viejas → alerta
     client_blocks = re.split(r'\n(?=\s*\d+ - .+?Total General:)', raw)
 
     line_re = re.compile(
@@ -100,7 +100,7 @@ def parsear_clientes(raw: str, hoy: date, cond_pago_map: dict) -> tuple[list, di
         por_vencer = sorted([f for f in facturas if f['diasVenc'] == 0], key=lambda x: x['fechaVenc'])
 
         for n in ncs:
-            n['antigua'] = datetime.strptime(n['fechaComp'][:10], '%Y-%m-%d').date() < CUTOFF_NC_ALERT
+            n['antigua'] = datetime.strptime(n['fechaComp'][:10], '%Y-%m-%d').date() < cutoff_nc_alert
 
         nc_alertas = [n for n in ncs if n['antigua']]
 

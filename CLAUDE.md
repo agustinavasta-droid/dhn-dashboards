@@ -6,7 +6,7 @@ Toma un PDF de "Saldo Detallado por Cliente" generado por el sistema de DHN
 y produce un `index.html` interactivo con:
 - Grilla filtrable por semáforo (Crítico / Medio / A tiempo)
 - Detalle de facturas por cliente expandible
-- Pestaña de NC antiguas (anteriores a junio 2024)
+- Pestaña de NC antiguas (del mes anterior al de la corrida, o más viejas)
 - Exportación a Excel directamente desde el browser
 - Totalizadores reactivos por estado
 
@@ -50,11 +50,10 @@ dhn_project/
 
 ## Configuración
 
-En `actualizar.py`, línea ~15, podés ajustar:
-
-```python
-CUTOFF_NC_ALERT = date(2024, 6, 1)  # NC anteriores a esta fecha → alerta
-```
+El corte de "NC antiguas" es automático: se recalcula en cada corrida como el
+primer día del mes en curso. Es decir, cualquier NC emitida antes de ese mes
+(el mes anterior o más vieja) aparece en la pestaña de alerta. No hace falta
+tocar nada a mano.
 
 ---
 

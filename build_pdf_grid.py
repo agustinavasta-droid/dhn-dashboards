@@ -186,17 +186,6 @@ tr.expanded .caret{transform:rotate(90deg);}
       </button>
       <select class="chip" id="condFilter">
         <option value="">Todas las condiciones</option>
-        <option value="CON">Contado</option>
-        <option value="EFV">Efectivo</option>
-        <option value="01D">1 d\u00eda</option>
-        <option value="07D">7 d\u00edas</option>
-        <option value="14D">14 d\u00edas</option>
-        <option value="15D">15 d\u00edas</option>
-        <option value="21D">21 d\u00edas</option>
-        <option value="30D">30 d\u00edas</option>
-        <option value="45D">45 d\u00edas</option>
-        <option value="60D">60 d\u00edas</option>
-        <option value="90D">90 d\u00edas</option>
       </select>
       <div class="chip active" data-sem="">Todos</div>
       <div class="chip" data-sem="rojo" style="display:flex;align-items:center;gap:5px;"><span class="semaforo sem-rojo"></span>Crítico</div>
@@ -327,6 +316,21 @@ function applyFilters(){
 }
 
 const COND = {'CON':'Contado','EFV':'Efectivo','01D':'1 día','07D':'7 días','14D':'14 días','15D':'15 días','21D':'21 días','30D':'30 días','45D':'45 días','60D':'60 días','90D':'90 días'};
+const COND_ORDER = ['CON','EFV','01D','07D','14D','15D','21D','30D','45D','60D','90D'];
+
+// Solo mostrar en el filtro las condiciones de pago que realmente existen en los datos
+(function poblarCondFilter(){
+  const presentes = new Set(clientes.map(c=>c.condPago).filter(v=>v && v!=='-'));
+  const ordenadas = COND_ORDER.filter(k=>presentes.has(k))
+    .concat([...presentes].filter(k=>!COND_ORDER.includes(k)));
+  const sel = document.getElementById('condFilter');
+  ordenadas.forEach(k=>{
+    const opt = document.createElement('option');
+    opt.value = k;
+    opt.textContent = COND[k] || k;
+    sel.appendChild(opt);
+  });
+})();
 
 function facTable(rows, tipo){
   if(!rows||!rows.length) return '<div class="empty">Sin movimientos.</div>';
