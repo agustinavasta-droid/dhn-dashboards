@@ -5,7 +5,7 @@ with open('pdf_data.json', encoding='utf-8') as f:
 
 data_json = json.dumps(data, ensure_ascii=False)
 
-COND_LABELS = {'CON':'Contado','07D':'7 días','14D':'14 días','21D':'21 días','30D':'30 días','45D':'45 días','60D':'60 días','90D':'90 días'}
+COND_LABELS = {'CON':'Contado','EFV':'Efectivo','01D':'1 día','07D':'7 días','14D':'14 días','15D':'15 días','21D':'21 días','30D':'30 días','45D':'45 días','60D':'60 días','90D':'90 días'}
 
 html = r"""<!DOCTYPE html>
 <html lang="es">
@@ -187,8 +187,11 @@ tr.expanded .caret{transform:rotate(90deg);}
       <select class="chip" id="condFilter">
         <option value="">Todas las condiciones</option>
         <option value="CON">Contado</option>
+        <option value="EFV">Efectivo</option>
+        <option value="01D">1 d\u00eda</option>
         <option value="07D">7 d\u00edas</option>
         <option value="14D">14 d\u00edas</option>
+        <option value="15D">15 d\u00edas</option>
         <option value="21D">21 d\u00edas</option>
         <option value="30D">30 d\u00edas</option>
         <option value="45D">45 d\u00edas</option>
@@ -323,7 +326,7 @@ function applyFilters(){
   return list;
 }
 
-const COND = {'CON':'Contado','07D':'7 días','14D':'14 días','21D':'21 días','30D':'30 días','45D':'45 días','60D':'60 días','90D':'90 días'};
+const COND = {'CON':'Contado','EFV':'Efectivo','01D':'1 día','07D':'7 días','14D':'14 días','15D':'15 días','21D':'21 días','30D':'30 días','45D':'45 días','60D':'60 días','90D':'90 días'};
 
 function facTable(rows, tipo){
   if(!rows||!rows.length) return '<div class="empty">Sin movimientos.</div>';
@@ -449,7 +452,7 @@ render();
 // ---- EXCEL EXPORT ----
 function exportExcel(){
   const filtered = applyFilters();
-  const COND2 = {'CON':'Contado','07D':'7 días','14D':'14 días','21D':'21 días','30D':'30 días','45D':'45 días','60D':'60 días','90D':'90 días'};
+  const COND2 = {'CON':'Contado','EFV':'Efectivo','01D':'1 día','07D':'7 días','14D':'14 días','15D':'15 días','21D':'21 días','30D':'30 días','45D':'45 días','60D':'60 días','90D':'90 días'};
   const SEM = {'rojo':'Crítico','amarillo':'Medio','verde':'A tiempo','neutro':'-'};
   const rows = filtered.map(c=>({
     'N°': c.cod,

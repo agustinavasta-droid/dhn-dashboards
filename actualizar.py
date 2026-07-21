@@ -15,7 +15,26 @@ from pathlib import Path
 # ── CONFIG ──────────────────────────────────────────────────────────────────
 CUTOFF_NC_ALERT = date(2024, 6, 1)   # NC anteriores a esta fecha → alerta
 OUTPUT_HTML     = Path("index.html")
+CLIENTES_XLSX   = Path(__file__).parent / "cliente.xlsx"
 # ────────────────────────────────────────────────────────────────────────────
+
+def cargar_condiciones_pago(xlsx_path: Path) -> dict:
+    """Lee cliente.xlsx y devuelve {codigo: codigoCondicionPago}."""
+    if not xlsx_path.exists():
+        return {}
+    import openpyxl
+    wb = openpyxl.load_workbook(xlsx_path, read_only=True, data_only=True)
+    ws = wb['clientes']
+    rows = ws.iter_rows(values_only=True)
+    header = next(rows)
+    idx_cod = header.index('codigo')
+    idx_cp  = header.index('codigoCondicionPago')
+    return {
+        str(row[idx_cod]): row[idx_cp]
+        for row in rows
+        if row[idx_cod] is not None and row[idx_cp]
+    }
+
 
 def extraer_texto(pdf_path: str) -> str:
     """Extrae el texto del PDF preservando el layout."""
@@ -28,7 +47,7 @@ def extraer_texto(pdf_path: str) -> str:
     return result.stdout
 
 
-def parsear_clientes(raw: str, hoy: date) -> tuple[list, dict]:
+def parsear_clientes(raw: str, hoy: date, cond_pago_map: dict) -> tuple[list, dict]:
     """Parsea el texto extraído y devuelve (clientes, totales)."""
     client_blocks = re.split(r'\n(?=\s*\d+ - .+?Total General:)', raw)
 
@@ -52,8 +71,10 @@ def parsear_clientes(raw: str, hoy: date) -> tuple[list, dict]:
         except ValueError:
             continue
 
-        cond_pagos = re.findall(r'\b(CON|07D|14D|21D|30D|45D|60D|90D)\b', block)
-        cond_pago  = max(set(cond_pagos), key=cond_pagos.count) if cond_pagos else '-'
+        cond_pago = cond_pago_map.get(cod)
+        if not cond_pago:
+            cond_pagos = re.findall(r'\b(CON|07D|14D|21D|30D|45D|60D|90D)\b', block)
+            cond_pago  = max(set(cond_pagos), key=cond_pagos.count) if cond_pagos else '-'
 
         movs = []
         for m in line_re.finditer(block):
@@ -199,11 +220,17 @@ def main():
         sys.exit(1)
 
     hoy = date.today()
+    cond_pago_map = cargar_condiciones_pago(CLIENTES_XLSX)
+    if cond_pago_map:
+        print(f"📇 Condición de pago cargada desde {CLIENTES_XLSX.name}: {len(cond_pago_map)} clientes")
+    else:
+        print(f"⚠️  No se encontró {CLIENTES_XLSX.name}, se usa el heurístico del PDF para cond. de pago")
+
     print(f"📄 Leyendo PDF: {pdf_path}")
     raw = extraer_texto(pdf_path)
 
     print("⚙️  Procesando clientes...")
-    clientes, totales = parsear_clientes(raw, hoy)
+    clientes, totales = parsear_clientes(raw, hoy, cond_pago_map)
 
     print(f"✅ {totales['clientes']} clientes · {totales['conVencido']} con vencido · {totales['conNcAlerta']} con NC antiguas")
     print(f"💰 Total vencido neto: ${totales['totalVencidoNeto']:,.2f}")
