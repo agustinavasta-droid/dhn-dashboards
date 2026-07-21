@@ -91,3 +91,18 @@ El score combina: monto vencido (hasta 50 pts) + días vencido (hasta 30 pts) + 
 
 **Quiero cambiar el diseño del HTML**
 → Editá `build_pdf_grid.py` y volvé a correr `actualizar.py`.
+
+---
+
+## Deploy automático
+
+Después de correr actualizar.py y generar el nuevo index.html (o deli_index.html), 
+correr siempre estos comandos para publicar los cambios:
+
+```bash
+git add -A
+git commit -m "Actualización dashboard $(date +%Y-%m-%d)"
+git push
+```
+
+Esto dispara el deploy automático en Netlify.
