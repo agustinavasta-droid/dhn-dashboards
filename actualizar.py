@@ -55,7 +55,7 @@ def parsear_clientes(raw: str, hoy: date, cond_pago_map: dict) -> tuple[list, di
     client_blocks = re.split(r'\n(?=\s*\d+ - )', raw)
 
     line_re = re.compile(
-        r'(\d{4}-\d{2}-\d{2})\s+(\S+)\s+(\d+)\s+'
+        r'(\d{4}-\d{2}-\d{2})\s+(\S+)\s+\d+\s+(\d+)\s+'
         r'(FAC-[AB]|NCR-[AB]|NDB-[AB]|DAJ|CAJ|COB-R)\s+'
         r'(\S+)\s+([A-Z0-9]+)\s+'
         r'\$\s*([\-\d.,]+)\s+\$\s*([\-\d.,]+)\s+(\d*)\s*'
