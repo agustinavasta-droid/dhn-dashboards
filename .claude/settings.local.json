@@ -12,7 +12,8 @@
       "Bash(pdftotext -layout PDFCUENTASCORR7.21.pdf -)",
       "Bash(pdftotext -layout /root/proyectos/dhn/PDFCUENTASCORR7.21.pdf -)",
       "Bash(gh auth *)",
-      "Bash(pdftotext -layout PDFCUENTASCORR7.24.pdf -)"
+      "Bash(pdftotext -layout PDFCUENTASCORR7.24.pdf -)",
+      "Bash(python *)"
     ]
   }
 }
