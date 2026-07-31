@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
 DHN - Actualizador de Cuentas Corrientes
-Uso: python actualizar.py NOMBRE_DEL_PDF.pdf
+Uso: python actualizar.py ARCHIVO1 [ARCHIVO2 ...]
+     Acepta el PDF "Saldo Detallado por Cliente" de DHN (.pdf) y/o el Excel
+     "Saldos Detallados por Cliente y Comprobante" de Deli (.xls/.xlsx), en
+     cualquier orden. Si en una corrida solo se pasa uno de los dos, el otro
+     se conserva tal cual estaba en el index.html anterior.
 Genera: index.html listo para subir a Netlify
 """
 
@@ -15,6 +19,11 @@ from pathlib import Path
 # ── CONFIG ──────────────────────────────────────────────────────────────────
 OUTPUT_HTML     = Path("index.html")
 CLIENTES_XLSX   = Path(__file__).parent / "cliente.xlsx"
+
+EMPRESAS = {
+    'dhn':  {'label': 'DHN Distribuciones'},
+    'deli': {'label': 'Deli'},
+}
 # ────────────────────────────────────────────────────────────────────────────
 
 def cargar_condiciones_pago(xlsx_path: Path) -> dict:
@@ -46,8 +55,78 @@ def extraer_texto(pdf_path: str) -> str:
     return result.stdout
 
 
+def armar_cliente(cod: str, nombre: str, vendedor, cond_pago: str,
+                  total_general: float, facturas: list, ncs: list,
+                  cutoff_nc_alert: date) -> dict:
+    """Arma el registro final de un cliente a partir de sus facturas y NC ya
+    clasificadas. Común a DHN y Deli para que ambos reportes generen
+    exactamente la misma estructura y el HTML los renderice igual."""
+    vencidas   = sorted([f for f in facturas if f['diasVenc'] > 0], key=lambda x: -x['diasVenc'])
+    por_vencer = sorted([f for f in facturas if f['diasVenc'] == 0], key=lambda x: x['fechaVenc'])
+
+    for n in ncs:
+        n['antigua'] = datetime.strptime(n['fechaComp'][:10], '%Y-%m-%d').date() < cutoff_nc_alert
+    nc_alertas = [n for n in ncs if n['antigua']]
+
+    total_nc        = sum(n['importe'] for n in ncs)
+    saldo_venc_neto = round(sum(f['importe'] for f in vencidas) + total_nc, 2)
+    max_dias        = max((f['diasVenc'] for f in vencidas), default=0)
+
+    # Score de prioridad
+    score = 0
+    if saldo_venc_neto > 20_000_000: score += 50
+    elif saldo_venc_neto > 10_000_000: score += 40
+    elif saldo_venc_neto > 5_000_000: score += 30
+    elif saldo_venc_neto > 2_000_000: score += 20
+    elif saldo_venc_neto > 500_000:   score += 10
+    if max_dias > 60: score += 30
+    elif max_dias > 45: score += 20
+    elif max_dias > 30: score += 10
+    nc_n = len(nc_alertas)
+    if nc_n > 20: score += 20
+    elif nc_n > 10: score += 15
+    elif nc_n > 0: score += 5
+
+    # Fecha vencido más antigua
+    venc_fechas = [
+        datetime.strptime(f['fechaVenc'][:10], '%Y-%m-%d').date()
+        for f in vencidas if f['fechaVenc'] != '0001-01-01'
+    ]
+    vencido_desde = min(venc_fechas).strftime('%d-%m-%Y') if venc_fechas else None
+
+    return {
+        'cod':             cod,
+        'nombre':          nombre,
+        'vendedor':        vendedor,
+        'totalGeneral':    round(total_general, 2),
+        'condPago':        cond_pago,
+        'totalNC':         round(total_nc, 2),
+        'saldoVencidoNeto': saldo_venc_neto,
+        'maxDiasVenc':     max_dias,
+        'vencidoDesde':    vencido_desde,
+        'prioScore':       score,
+        'vencidas':        vencidas,
+        'porVencer':       por_vencer,
+        'ncAlertas':       nc_alertas,
+        'ncs':             ncs,
+    }
+
+
+def calcular_totales(clientes: list, hoy: date) -> dict:
+    return {
+        'clientes':         len(clientes),
+        'conVencido':       sum(1 for c in clientes if c['saldoVencidoNeto'] > 0),
+        'conPorVencer':     sum(1 for c in clientes if c['porVencer']),
+        'conNcAlerta':      sum(1 for c in clientes if c['ncAlertas']),
+        'totalVencidoNeto': round(sum(c['saldoVencidoNeto'] for c in clientes if c['saldoVencidoNeto'] > 0), 2),
+        'totalPorVencer':   round(sum(f['importe'] for c in clientes for f in c['porVencer']), 2),
+        'totalNC':          round(sum(c['totalNC'] for c in clientes), 2),
+        'fecha':            hoy.strftime('%Y-%m-%d'),
+    }
+
+
 def parsear_clientes(raw: str, hoy: date, cond_pago_map: dict) -> tuple[list, dict]:
-    """Parsea el texto extraído y devuelve (clientes, totales)."""
+    """DHN: parsea el texto extraído del PDF y devuelve (clientes, totales)."""
     cutoff_nc_alert = date(hoy.year, hoy.month, 1)   # NC del mes anterior o más viejas → alerta
     # El corte de bloque solo depende del inicio "NNN - " en la línea: cuando el
     # nombre del cliente es largo y se parte en dos líneas, "Total General:" queda
@@ -126,99 +205,124 @@ def parsear_clientes(raw: str, hoy: date, cond_pago_map: dict) -> tuple[list, di
         facturas  = [m for m in movs if m['tipo'].startswith('FAC')]
         ncs       = [m for m in movs if m['tipo'].startswith('NCR') or m['tipo'].startswith('NDB')]
 
-        vencidas   = sorted([f for f in facturas if f['diasVenc'] > 0], key=lambda x: -x['diasVenc'])
-        por_vencer = sorted([f for f in facturas if f['diasVenc'] == 0], key=lambda x: x['fechaVenc'])
+        clientes.append(armar_cliente(cod, nombre, vendedor, cond_pago, total_general,
+                                       facturas, ncs, cutoff_nc_alert))
 
-        for n in ncs:
-            n['antigua'] = datetime.strptime(n['fechaComp'][:10], '%Y-%m-%d').date() < cutoff_nc_alert
-
-        nc_alertas = [n for n in ncs if n['antigua']]
-
-        total_nc       = sum(n['importe'] for n in ncs)
-        saldo_venc_neto = round(sum(f['importe'] for f in vencidas) + total_nc, 2)
-        max_dias       = max((f['diasVenc'] for f in vencidas), default=0)
-
-        # Score de prioridad
-        score = 0
-        if saldo_venc_neto > 20_000_000: score += 50
-        elif saldo_venc_neto > 10_000_000: score += 40
-        elif saldo_venc_neto > 5_000_000: score += 30
-        elif saldo_venc_neto > 2_000_000: score += 20
-        elif saldo_venc_neto > 500_000:   score += 10
-        if max_dias > 60: score += 30
-        elif max_dias > 45: score += 20
-        elif max_dias > 30: score += 10
-        nc_n = len(nc_alertas)
-        if nc_n > 20: score += 20
-        elif nc_n > 10: score += 15
-        elif nc_n > 0: score += 5
-
-        # Fecha vencido más antigua
-        venc_fechas = [
-            datetime.strptime(f['fechaVenc'][:10], '%Y-%m-%d').date()
-            for f in vencidas if f['fechaVenc'] != '0001-01-01'
-        ]
-        vencido_desde = min(venc_fechas).strftime('%d-%m-%Y') if venc_fechas else None
-
-        clientes.append({
-            'cod':             cod,
-            'nombre':          nombre,
-            'vendedor':        vendedor,
-            'totalGeneral':    round(total_general, 2),
-            'condPago':        cond_pago,
-            'totalNC':         round(total_nc, 2),
-            'saldoVencidoNeto': saldo_venc_neto,
-            'maxDiasVenc':     max_dias,
-            'vencidoDesde':    vencido_desde,
-            'prioScore':       score,
-            'vencidas':        vencidas,
-            'porVencer':       por_vencer,
-            'ncAlertas':       nc_alertas,
-            'ncs':             ncs,
-        })
-
-    totales = {
-        'clientes':         len(clientes),
-        'conVencido':       sum(1 for c in clientes if c['saldoVencidoNeto'] > 0),
-        'conPorVencer':     sum(1 for c in clientes if c['porVencer']),
-        'conNcAlerta':      sum(1 for c in clientes if c['ncAlertas']),
-        'totalVencidoNeto': round(sum(c['saldoVencidoNeto'] for c in clientes if c['saldoVencidoNeto'] > 0), 2),
-        'totalPorVencer':   round(sum(f['importe'] for c in clientes for f in c['porVencer']), 2),
-        'totalNC':          round(sum(c['totalNC'] for c in clientes), 2),
-        'fecha':            hoy.strftime('%Y-%m-%d'),
-    }
+    totales = calcular_totales(clientes, hoy)
     return clientes, totales
 
 
-def generar_html(clientes: list, totales: dict, fecha_reporte: str) -> str:
-    """Lee el template de build_pdf_grid.py y genera el HTML final."""
-    data_json = json.dumps({'clientes': clientes, 'totales': totales}, ensure_ascii=False)
+def parsear_deli(xls_path: str, hoy: date) -> tuple[list, dict]:
+    """Deli: parsea el Excel "Saldos Detallados por Cliente y Comprobante"
+    (.xls viejo, formato Crystal Reports) y devuelve (clientes, totales).
 
-    # Lee el script builder y extrae el template HTML
+    Formato bien distinto al PDF de DHN:
+    - No trae condición de pago ni número de vendedor.
+    - No tiene una línea de "Total General": el total de cada cliente está en
+      la celda de la columna K (índice 10) de la fila de dirección, dos filas
+      debajo del encabezado del cliente.
+    - No separa facturas de NC por un código de tipo confiable (los prefijos
+      de comprobante como PEX/RPX aparecen con importes positivos y negativos
+      indistintamente), así que se clasifica por el signo del importe:
+      positivo = cargo (factura), negativo = crédito (NC).
+    - "Fecha Comprob." no existe: se usa la Fecha Mov. como equivalente.
+    """
+    import xlrd
+
+    cutoff_nc_alert = date(hoy.year, hoy.month, 1)
+    wb = xlrd.open_workbook(xls_path)
+    sh = wb.sheet_by_index(0)
+    datemode = wb.datemode
+    n = sh.nrows
+
+    def xldate_iso(v):
+        return xlrd.xldate.xldate_as_datetime(v, datemode).date().isoformat()
+
+    def es_header_cliente(r):
+        v0, t0 = sh.cell_value(r, 0), sh.cell_type(r, 0)
+        return t0 == 1 and isinstance(v0, str) and re.fullmatch(r'[\d.]+', v0.strip())
+
+    clientes = []
+    r = 0
+    while r < n:
+        if not es_header_cliente(r):
+            r += 1
+            continue
+
+        cod = sh.cell_value(r, 0).strip().replace('.', '')
+        nombre = str(sh.cell_value(r, 1)).strip().lstrip('@').strip()
+
+        total_general = None
+        facturas, ncs = [], []
+        rr = r + 1
+        while rr < n and not es_header_cliente(rr):
+            if total_general is None and sh.cell_type(rr, 10) == 2:
+                total_general = sh.cell_value(rr, 10)
+            if sh.cell_type(rr, 1) == 3:   # fila de movimiento (Fecha Mov. es una fecha real)
+                fecha_mov  = xldate_iso(sh.cell_value(rr, 1))
+                fecha_venc = xldate_iso(sh.cell_value(rr, 2)) if sh.cell_type(rr, 2) == 3 else fecha_mov
+                comp = str(sh.cell_value(rr, 4)).strip()
+                importe = round(float(sh.cell_value(rr, 6)), 2)
+                tipo_m = re.match(r'^([A-Za-z]+)', comp)
+                mov = {
+                    'fechaComp': fecha_mov,
+                    'fechaVenc': fecha_venc,
+                    'tipo':      tipo_m.group(1) if tipo_m else '-',
+                    'nro':       comp,
+                    'condPago':  '-',
+                    'importe':   importe,
+                }
+                if importe >= 0:
+                    fv = datetime.strptime(fecha_venc, '%Y-%m-%d').date()
+                    mov['diasVenc'] = max(0, (hoy - fv).days)
+                    facturas.append(mov)
+                else:
+                    ncs.append(mov)
+            rr += 1
+        r = rr
+
+        if total_general is None:
+            total_general = sum(f['importe'] for f in facturas) + sum(x['importe'] for x in ncs)
+
+        clientes.append(armar_cliente(cod, nombre, None, '-', total_general,
+                                       facturas, ncs, cutoff_nc_alert))
+
+    totales = calcular_totales(clientes, hoy)
+    return clientes, totales
+
+
+def cargar_empresas_previas() -> dict:
+    """Si ya existe un index.html, recupera los datos embebidos por empresa
+    para no perderlos cuando esta corrida solo trae el archivo de una de las
+    dos (p.ej. un día solo llega el PDF de DHN)."""
+    if not OUTPUT_HTML.exists():
+        return {}
+    html = OUTPUT_HTML.read_text(encoding='utf-8')
+    m = re.search(r'const DATA\s*=\s*(\{.*?\});\n', html, re.S)
+    if not m:
+        return {}
+    try:
+        return json.loads(m.group(1))
+    except json.JSONDecodeError:
+        return {}
+
+
+def generar_html(empresas: dict) -> None:
+    """Lee el template de build_pdf_grid.py y genera index.html con los datos
+    de todas las empresas presentes en `empresas`."""
+    data_json = json.dumps(empresas, ensure_ascii=False)
+
     build_script = Path(__file__).parent / "build_pdf_grid.py"
-    exec_globals = {}
-    # Reemplaza la data embebida con la nueva
     with open(build_script, encoding='utf-8') as f:
         build_src = f.read()
 
-    # Actualiza fecha en el HTML
-    build_src_mod = re.sub(r'DHN Distribuciones · Reporte al \d{2}-\d{2}-\d{4}',
-                           f'DHN Distribuciones · Reporte al {datetime.strptime(fecha_reporte, "%Y-%m-%d").strftime("%d-%m-%Y")}',
-                           build_src)
-    build_src_mod = re.sub(r"'fecha': '\d{4}-\d{2}-\d{2}'",
-                           f"'fecha': '{fecha_reporte}'", build_src_mod)
-
     # Ejecuta el script builder con la nueva data
-    import io, contextlib
-    import importlib.util, types
-
-    # Patch: intercept open() for grid_data.json to serve our data
-    import builtins
+    import io, contextlib, builtins
     orig_open = builtins.open
 
     class FakeFile:
-        def __init__(self): self._data = data_json.encode()
-        def read(self): return data_json
+        def __init__(self): self._data = data_json
+        def read(self): return self._data
         def __enter__(self): return self
         def __exit__(self, *a): pass
 
@@ -231,43 +335,61 @@ def generar_html(clientes: list, totales: dict, fecha_reporte: str) -> str:
     try:
         captured = io.StringIO()
         with contextlib.redirect_stdout(captured):
-            exec(compile(build_src_mod, build_script, 'exec'), {'__file__': str(build_script)})
+            exec(compile(build_src, build_script, 'exec'), {'__file__': str(build_script)})
     finally:
         builtins.open = orig_open
-
-    # Lee el HTML generado
-    html_out = OUTPUT_HTML.read_text(encoding='utf-8')
-    return html_out
 
 
 def main():
     if len(sys.argv) < 2:
-        print("Uso: python actualizar.py RUTA_AL_PDF.pdf")
-        sys.exit(1)
-
-    pdf_path = sys.argv[1]
-    if not Path(pdf_path).exists():
-        print(f"❌ No se encontró el archivo: {pdf_path}")
+        print("Uso: python actualizar.py ARCHIVO.pdf [ARCHIVO_DELI.xls]")
+        print("     Acepta el PDF de DHN y/o el Excel de Deli, en cualquier orden.")
+        print("     Si falta alguno de los dos, se conserva el de la corrida anterior.")
         sys.exit(1)
 
     hoy = date.today()
-    cond_pago_map = cargar_condiciones_pago(CLIENTES_XLSX)
-    if cond_pago_map:
-        print(f"📇 Condición de pago cargada desde {CLIENTES_XLSX.name}: {len(cond_pago_map)} clientes")
-    else:
-        print(f"⚠️  No se encontró {CLIENTES_XLSX.name}, se usa el heurístico del PDF para cond. de pago")
+    empresas = cargar_empresas_previas()
 
-    print(f"📄 Leyendo PDF: {pdf_path}")
-    raw = extraer_texto(pdf_path)
+    for path_str in sys.argv[1:]:
+        path = Path(path_str)
+        if not path.exists():
+            print(f"❌ No se encontró el archivo: {path_str}")
+            sys.exit(1)
 
-    print("⚙️  Procesando clientes...")
-    clientes, totales = parsear_clientes(raw, hoy, cond_pago_map)
+        ext = path.suffix.lower()
+        if ext == '.pdf':
+            cond_pago_map = cargar_condiciones_pago(CLIENTES_XLSX)
+            if cond_pago_map:
+                print(f"📇 Condición de pago cargada desde {CLIENTES_XLSX.name}: {len(cond_pago_map)} clientes")
+            else:
+                print(f"⚠️  No se encontró {CLIENTES_XLSX.name}, se usa el heurístico del PDF para cond. de pago")
 
-    print(f"✅ {totales['clientes']} clientes · {totales['conVencido']} con vencido · {totales['conNcAlerta']} con NC antiguas")
-    print(f"💰 Total vencido neto: ${totales['totalVencidoNeto']:,.2f}")
+            print(f"📄 Leyendo PDF DHN: {path_str}")
+            raw = extraer_texto(path_str)
+            print("⚙️  Procesando clientes DHN...")
+            clientes, totales = parsear_clientes(raw, hoy, cond_pago_map)
+            empresas['dhn'] = {'label': EMPRESAS['dhn']['label'], 'clientes': clientes, 'totales': totales}
+
+        elif ext in ('.xls', '.xlsx'):
+            print(f"📄 Leyendo Excel Deli: {path_str}")
+            print("⚙️  Procesando clientes Deli...")
+            clientes, totales = parsear_deli(path_str, hoy)
+            empresas['deli'] = {'label': EMPRESAS['deli']['label'], 'clientes': clientes, 'totales': totales}
+
+        else:
+            print(f"❌ Extensión no reconocida para {path_str} (se espera .pdf o .xls/.xlsx)")
+            sys.exit(1)
+
+        totales_actual = empresas['dhn']['totales'] if ext == '.pdf' else empresas['deli']['totales']
+        print(f"✅ {totales_actual['clientes']} clientes · {totales_actual['conVencido']} con vencido · {totales_actual['conNcAlerta']} con NC antiguas")
+        print(f"💰 Total vencido neto: ${totales_actual['totalVencidoNeto']:,.2f}")
+
+    if not empresas:
+        print("❌ No hay datos para generar el dashboard.")
+        sys.exit(1)
 
     print("🔨 Generando HTML...")
-    generar_html(clientes, totales, hoy.strftime('%Y-%m-%d'))
+    generar_html(empresas)
 
     print(f"\n✅ Listo → {OUTPUT_HTML.resolve()}")
     print("📤 Subí ese archivo a Netlify y el dashboard se actualiza.")

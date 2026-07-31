@@ -5,8 +5,6 @@ with open('pdf_data.json', encoding='utf-8') as f:
 
 data_json = json.dumps(data, ensure_ascii=False)
 
-COND_LABELS = {'CON':'Contado','EFV':'Efectivo','01D':'1 día','07D':'7 días','14D':'14 días','15D':'15 días','21D':'21 días','30D':'30 días','45D':'45 días','60D':'60 días','90D':'90 días'}
-
 html = r"""<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -40,13 +38,14 @@ h1{font-size:clamp(24px,3.5vw,36px);font-weight:800;color:#fff;letter-spacing:-.
 .stat .val{font-size:21px;font-weight:800;color:#fff;}
 
 /* Tabs */
-.tabs{display:flex;gap:8px;margin-bottom:16px;}
+.tabs{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;}
 .tab{font-size:13px;font-weight:700;padding:9px 18px;border-radius:10px;cursor:pointer;border:2px solid rgba(255,255,255,.25);color:rgba(255,255,255,.8);background:rgba(255,255,255,.1);transition:all .15s;}
 .tab:hover{border-color:rgba(255,255,255,.6);color:#fff;}
 .tab.active{background:#fff;border-color:#fff;color:var(--v2);}
 .tab .pill{display:inline-block;font-size:11px;background:var(--red);color:#fff;border-radius:20px;padding:1px 7px;margin-left:6px;}
 .tab.active .pill{background:var(--red);}
 .tab .pill.amber{background:var(--amber);}
+.tabs-company .tab{font-size:14px;padding:10px 22px;}
 
 /* Panel */
 .panel{background:var(--card);border-radius:18px;box-shadow:0 20px 50px rgba(20,5,50,.3);overflow:hidden;}
@@ -152,7 +151,7 @@ tr.expanded .caret{transform:rotate(90deg);}
 <div class="wrap">
   <div class="masthead">
     <div>
-      <div class="eyebrow">DHN Distribuciones · Reporte al 17-07-2026</div>
+      <div class="eyebrow" id="eyebrowTxt">Reporte</div>
       <h1>Saldo Detallado por Cliente</h1>
     </div>
     <div class="meta">
@@ -160,6 +159,8 @@ tr.expanded .caret{transform:rotate(90deg);}
       <div><b id="mVenc">0</b> con saldo vencido</div>
     </div>
   </div>
+
+  <div class="tabs tabs-company" id="companyTabs"></div>
 
   <div class="stats">
     <div class="stat"><span class="lbl">Total Vencido (neto NC)</span><div class="val" id="sVencido"></div></div>
@@ -178,7 +179,7 @@ tr.expanded .caret{transform:rotate(90deg);}
     <div class="controls">
       <div class="search">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input type="text" id="searchInput" placeholder="Buscar cliente\u2026">
+        <input type="text" id="searchInput" placeholder="Buscar cliente…">
       </div>
       <div class="chip active" data-filter="vencido">Con vencido</div>
       <div class="chip" data-filter="porvencer">Por vencer</div>
@@ -207,12 +208,12 @@ tr.expanded .caret{transform:rotate(90deg);}
       <table>
         <thead>
           <tr>
-            <th data-key="cod" style="width:80px;">N\u00b0 <span class="arr">\u2195</span></th>
-            <th data-key="nombre">Cliente <span class="arr">\u2195</span></th>
+            <th data-key="cod" style="width:80px;">N° <span class="arr">↕</span></th>
+            <th data-key="nombre">Cliente <span class="arr">↕</span></th>
             <th data-key="condPago" style="text-align:left;">Cond. Pago <span class="arr">↕</span></th>
-            <th data-key="saldoVencidoNeto">Saldo Vencido <span class="arr">\u2195</span></th>
-            <th data-key="maxDiasVenc">D\u00edas venc. <span class="arr">\u2195</span></th>
-            <th data-key="porVencerTotal">Por vencer <span class="arr">\u2195</span></th>
+            <th data-key="saldoVencidoNeto">Saldo Vencido <span class="arr">↕</span></th>
+            <th data-key="maxDiasVenc">Días venc. <span class="arr">↕</span></th>
+            <th data-key="porVencerTotal">Por vencer <span class="arr">↕</span></th>
           </tr>
         </thead>
         <tbody id="tbody"></tbody>
@@ -229,13 +230,20 @@ tr.expanded .caret{transform:rotate(90deg);}
     <div class="nc-alert-section" id="ncBody"></div>
   </div>
 
-  <div class="source">PDF: PDFCUENTASCORR7_17.pdf &middot; Fecha reporte: 17-07-2026 &middot; Clic en fila para ver detalle de facturas</div>
+  <div class="source" id="sourceLine">Clic en fila para ver detalle de facturas</div>
 </div>
 
 <script>
 const DATA = __DATA_JSON__;
-const clientes = DATA.clientes;
-const totales = DATA.totales;
+const EMPRESAS = Object.keys(DATA);
+
+let currentEmpresa = EMPRESAS[0];
+let currentTab = 'main';
+
+const states = {};
+EMPRESAS.forEach(k => {
+  states[k] = {filter:'vencido',search:'',sortKey:'saldoVencidoNeto',sortDir:-1,page:1,pageSize:50,expanded:null,cond:'',sem:''};
+});
 
 function money(n){
   if(n===null||n===undefined) return '—';
@@ -244,43 +252,85 @@ function money(n){
 }
 function fmt(s){ return s ? s.slice(0,10).split('-').reverse().join('-') : ''; }
 
-document.getElementById('mCli').textContent = totales.clientes.toLocaleString('es-AR');
-document.getElementById('mVenc').textContent = totales.conVencido.toLocaleString('es-AR');
-document.getElementById('sVencido').textContent = money(totales.totalVencidoNeto);
-document.getElementById('sPorVencer').textContent = money(totales.totalPorVencer);
-document.getElementById('sNC').textContent = money(totales.totalNC);
-document.getElementById('sNcAlert').textContent = totales.conNcAlerta.toLocaleString('es-AR') + ' clientes';
-document.getElementById('ncCount').textContent = totales.conNcAlerta;
+function clientesActuales(){ return DATA[currentEmpresa].clientes; }
+function totalesActuales(){ return DATA[currentEmpresa].totales; }
+function stateActual(){ return states[currentEmpresa]; }
 
-// Precompute por vencer total per client
-clientes.forEach(c => {
-  c.porVencerTotal = c.porVencer.reduce((s,f)=>s+f.importe,0);
-  // semaforo: rojo=critico, amarillo=medio, verde=ok/a tiempo
-  if(c.saldoVencidoNeto>0){
-    const score=c.prioScore||0;
-    if(score>=60 || c.maxDiasVenc>60) c.semaforo='rojo';
-    else if(score>=20 || c.maxDiasVenc>30) c.semaforo='amarillo';
-    else c.semaforo='amarillo';
-  } else if(c.porVencerTotal>0){
-    c.semaforo='verde';
-  } else {
-    c.semaforo='neutro';
-  }
+// Precompute por vencer total y semáforo por cliente, para todas las empresas
+EMPRESAS.forEach(k => {
+  DATA[k].clientes.forEach(c => {
+    c.porVencerTotal = c.porVencer.reduce((s,f)=>s+f.importe,0);
+    // semaforo: rojo=critico, amarillo=medio, verde=ok/a tiempo
+    if(c.saldoVencidoNeto>0){
+      const score=c.prioScore||0;
+      if(score>=60 || c.maxDiasVenc>60) c.semaforo='rojo';
+      else if(score>=20 || c.maxDiasVenc>30) c.semaforo='amarillo';
+      else c.semaforo='amarillo';
+    } else if(c.porVencerTotal>0){
+      c.semaforo='verde';
+    } else {
+      c.semaforo='neutro';
+    }
+  });
 });
 
-// ---- TABS ----
+// ---- COMPANY TABS ----
+function renderCompanyTabs(){
+  const el = document.getElementById('companyTabs');
+  el.innerHTML = EMPRESAS.map(k=>`<div class="tab ${k===currentEmpresa?'active':''}" data-empresa="${k}">${DATA[k].label}</div>`).join('');
+  el.querySelectorAll('.tab').forEach(t=>{
+    t.addEventListener('click',()=>{
+      if(t.dataset.empresa===currentEmpresa) return;
+      currentEmpresa = t.dataset.empresa;
+      onEmpresaChange();
+    });
+  });
+}
+
+function onEmpresaChange(){
+  renderCompanyTabs();
+  renderMasthead();
+  poblarCondFilter();
+  syncControlsUI();
+  if(currentTab==='main') render(); else renderNC();
+}
+
+function renderMasthead(){
+  const tot = totalesActuales();
+  const label = DATA[currentEmpresa].label;
+  document.getElementById('eyebrowTxt').textContent = `${label} · Reporte al ${fmt(tot.fecha)}`;
+  document.getElementById('mCli').textContent = tot.clientes.toLocaleString('es-AR');
+  document.getElementById('mVenc').textContent = tot.conVencido.toLocaleString('es-AR');
+  document.getElementById('sVencido').textContent = money(tot.totalVencidoNeto);
+  document.getElementById('sPorVencer').textContent = money(tot.totalPorVencer);
+  document.getElementById('sNC').textContent = money(tot.totalNC);
+  document.getElementById('sNcAlert').textContent = tot.conNcAlerta.toLocaleString('es-AR') + ' clientes';
+  document.getElementById('ncCount').textContent = tot.conNcAlerta;
+  document.getElementById('sourceLine').textContent = `${label} · Fecha reporte: ${fmt(tot.fecha)} · Clic en fila para ver detalle de facturas`;
+}
+
+function syncControlsUI(){
+  const st = stateActual();
+  document.querySelectorAll('.chip[data-filter]').forEach(c=>c.classList.toggle('active', c.dataset.filter===st.filter));
+  document.querySelectorAll('.chip[data-sem]').forEach(c=>c.classList.toggle('active', c.dataset.sem===st.sem));
+  document.getElementById('searchInput').value = st.search;
+  document.getElementById('condFilter').value = st.cond;
+}
+
+// ---- TABS (Cuentas Corrientes / NC Antiguas) ----
 function showTab(t){
+  currentTab = t;
   document.getElementById('tabMain').classList.toggle('active',t==='main');
   document.getElementById('tabNC').classList.toggle('active',t==='nc');
   document.getElementById('mainPanel').classList.toggle('hidden',t==='nc');
   document.getElementById('ncPanel').classList.toggle('visible',t==='nc');
-  if(t==='nc') renderNC();
+  if(t==='nc') renderNC(); else render();
 }
 
 // ---- NC ALERT PANEL ----
 function renderNC(){
   const el = document.getElementById('ncBody');
-  const con = clientes.filter(c=>c.ncAlertas && c.ncAlertas.length>0).sort((a,b)=>a.ncAlertas.reduce((s,n)=>s+n.importe,0)-b.ncAlertas.reduce((s,n)=>s+n.importe,0));
+  const con = clientesActuales().filter(c=>c.ncAlertas && c.ncAlertas.length>0).sort((a,b)=>a.ncAlertas.reduce((s,n)=>s+n.importe,0)-b.ncAlertas.reduce((s,n)=>s+n.importe,0));
   if(!con.length){el.innerHTML='<div class="empty">Sin NC antiguas.</div>';return;}
   el.innerHTML = con.map((c,i)=>{
     const tot = c.ncAlertas.reduce((s,n)=>s+n.importe,0);
@@ -300,10 +350,9 @@ function toggleNC(i){
 }
 
 // ---- MAIN GRID ----
-let state={filter:'vencido',search:'',sortKey:'saldoVencidoNeto',sortDir:-1,page:1,pageSize:50,expanded:null,cond:'',sem:''};
-
 function applyFilters(){
-  let list=clientes;
+  const state = stateActual();
+  let list = clientesActuales();
   if(state.filter==='vencido') list=list.filter(c=>c.saldoVencidoNeto>0);
   else if(state.filter==='porvencer') list=list.filter(c=>c.porVencerTotal>0);
   if(state.cond) list=list.filter(c=>c.condPago===state.cond);
@@ -320,19 +369,20 @@ function applyFilters(){
 const COND = {'CON':'Contado','EFV':'Efectivo','01D':'1 día','07D':'7 días','14D':'14 días','15D':'15 días','21D':'21 días','30D':'30 días','45D':'45 días','60D':'60 días','90D':'90 días'};
 const COND_ORDER = ['CON','EFV','01D','07D','14D','15D','21D','30D','45D','60D','90D'];
 
-// Solo mostrar en el filtro las condiciones de pago que realmente existen en los datos
-(function poblarCondFilter(){
-  const presentes = new Set(clientes.map(c=>c.condPago).filter(v=>v && v!=='-'));
+// Solo mostrar en el filtro las condiciones de pago que realmente existen en los datos de la empresa actual
+function poblarCondFilter(){
+  const sel = document.getElementById('condFilter');
+  sel.innerHTML = '<option value="">Todas las condiciones</option>';
+  const presentes = new Set(clientesActuales().map(c=>c.condPago).filter(v=>v && v!=='-'));
   const ordenadas = COND_ORDER.filter(k=>presentes.has(k))
     .concat([...presentes].filter(k=>!COND_ORDER.includes(k)));
-  const sel = document.getElementById('condFilter');
   ordenadas.forEach(k=>{
     const opt = document.createElement('option');
     opt.value = k;
     opt.textContent = COND[k] || k;
     sel.appendChild(opt);
   });
-})();
+}
 
 function facTable(rows, tipo){
   if(!rows||!rows.length) return '<div class="empty">Sin movimientos.</div>';
@@ -351,6 +401,7 @@ function facTable(rows, tipo){
 }
 
 function render(){
+  const state = stateActual();
   const filtered=applyFilters();
   updateTotales(filtered);
   const totalPages=Math.max(1,Math.ceil(filtered.length/state.pageSize));
@@ -376,7 +427,7 @@ function render(){
       <td class="num">${c.maxDiasVenc>0?'<span class="dias-badge">'+c.maxDiasVenc+' días</span>':'—'}</td>
       <td class="num">${c.porVencerTotal>0?money(c.porVencerTotal):'—'}</td>
     `;
-    tr.addEventListener('click',()=>{state.expanded=(state.expanded===c.cod)?null:c.cod;render();});
+    tr.addEventListener('click',()=>{const st=stateActual();st.expanded=(st.expanded===c.cod)?null:c.cod;render();});
     tbody.appendChild(tr);
 
     if(isExp){
@@ -389,7 +440,7 @@ function render(){
           <h4>Facturas Vencidas (${c.vencidas.length})</h4>
           ${facTable(c.vencidas,'venc')}
           <div class="det-col nc" style="margin-top:14px;">
-            <h4>Notas de Cr\u00e9dito (${c.ncs?c.ncs.length:0})</h4>
+            <h4>Notas de Crédito (${c.ncs?c.ncs.length:0})</h4>
             ${ncRows}
           </div>
           <div class="neteo-box">
@@ -410,8 +461,8 @@ function render(){
   document.getElementById('footInfo').textContent=`Mostrando ${filtered.length===0?0:start+1}–${Math.min(start+state.pageSize,filtered.length)} de ${filtered.length}`;
   const pager=document.getElementById('pager');
   pager.innerHTML=`<button id="pb" ${state.page<=1?'disabled':''}>← Anterior</button><span>Pág. ${state.page}/${totalPages}</span><button id="nb" ${state.page>=totalPages?'disabled':''}>Siguiente →</button>`;
-  document.getElementById('pb').addEventListener('click',()=>{state.page--;render();});
-  document.getElementById('nb').addEventListener('click',()=>{state.page++;render();});
+  document.getElementById('pb').addEventListener('click',()=>{stateActual().page--;render();});
+  document.getElementById('nb').addEventListener('click',()=>{stateActual().page++;render();});
   document.querySelectorAll('thead th').forEach(th=>{
     const isSorted=th.dataset.key===state.sortKey;
     th.classList.toggle('sorted',isSorted);
@@ -422,6 +473,7 @@ function render(){
 
 document.querySelectorAll('thead th').forEach(th=>{
   th.addEventListener('click',()=>{
+    const state = stateActual();
     const key=th.dataset.key;
     if(state.sortKey===key){state.sortDir*=-1;}else{state.sortKey=key;state.sortDir=key==='nombre'||key==='cod'||key==='condPago'?1:-1;}
     render();
@@ -431,20 +483,25 @@ document.querySelectorAll('.chip[data-filter]').forEach(chip=>{
   chip.addEventListener('click',()=>{
     document.querySelectorAll('.chip[data-filter]').forEach(c=>c.classList.remove('active'));
     chip.classList.add('active');
+    const state = stateActual();
     state.filter=chip.dataset.filter;state.page=1;state.expanded=null;render();
   });
 });
-document.getElementById('condFilter').addEventListener('change',e=>{state.cond=e.target.value;state.page=1;state.expanded=null;render();});
+document.getElementById('condFilter').addEventListener('change',e=>{
+  const state = stateActual();
+  state.cond=e.target.value;state.page=1;state.expanded=null;render();
+});
 document.querySelectorAll('.chip[data-sem]').forEach(chip=>{
   chip.addEventListener('click',()=>{
     document.querySelectorAll('.chip[data-sem]').forEach(c=>c.classList.remove('active'));
     chip.classList.add('active');
+    const state = stateActual();
     state.sem=chip.dataset.sem;state.page=1;state.expanded=null;render();
   });
 });
 let st;
 document.getElementById('searchInput').addEventListener('input',e=>{
-  clearTimeout(st);st=setTimeout(()=>{state.search=e.target.value.trim();state.page=1;state.expanded=null;render();},150);
+  clearTimeout(st);st=setTimeout(()=>{const state=stateActual();state.search=e.target.value.trim();state.page=1;state.expanded=null;render();},150);
 });
 
 function updateTotales(filtered){
@@ -458,10 +515,16 @@ function updateTotales(filtered){
   document.getElementById('totTotal').textContent = money(totalVenc);
 }
 
+// ---- INIT ----
+renderCompanyTabs();
+renderMasthead();
+poblarCondFilter();
+syncControlsUI();
 render();
 
 // ---- EXCEL EXPORT ----
 function exportExcel(){
+  const state = stateActual();
   const filtered = applyFilters();
   const COND2 = {'CON':'Contado','EFV':'Efectivo','01D':'1 día','07D':'7 días','14D':'14 días','15D':'15 días','21D':'21 días','30D':'30 días','45D':'45 días','60D':'60 días','90D':'90 días'};
   const SEM = {'rojo':'Crítico','amarillo':'Medio','verde':'A tiempo','neutro':'-'};
@@ -482,10 +545,12 @@ function exportExcel(){
   ws['!cols'] = wscols;
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Cuentas Corrientes');
+  const label = DATA[currentEmpresa].label;
+  const fechaReporte = totalesActuales().fecha;
   // Summary sheet
   const sumRows = [
-    ['Reporte','DHN - Cuentas Corrientes'],
-    ['Fecha','2026-07-17'],
+    ['Reporte', label + ' - Cuentas Corrientes'],
+    ['Fecha', fechaReporte],
     ['Filtro aplicado', state.sem ? (state.sem==='rojo'?'Crítico':state.sem==='amarillo'?'Medio':'A tiempo') : state.filter==='vencido'?'Con vencido':state.filter==='porvencer'?'Por vencer':'Todos'],
     [''],
     ['Estado','Clientes','Total ($)'],
@@ -498,7 +563,7 @@ function exportExcel(){
   const ws2 = XLSX.utils.aoa_to_sheet(sumRows);
   ws2['!cols'] = [{wch:28},{wch:18},{wch:20}];
   XLSX.utils.book_append_sheet(wb, ws2, 'Resumen');
-  XLSX.writeFile(wb, 'CuentasCorrientes_DHN_' + new Date().toISOString().slice(0,10) + '.xlsx');
+  XLSX.writeFile(wb, 'CuentasCorrientes_' + label.replace(/\s+/g,'') + '_' + fechaReporte + '.xlsx');
 }
 </script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>

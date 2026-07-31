@@ -6,3 +6,6 @@ pypdf>=4.0.0
 
 # Para leer cliente.xlsx (condición de pago por cliente)
 openpyxl>=3.1.0
+
+# Para leer el Excel .xls (formato viejo) de Deli
+xlrd>=2.0.0
