@@ -1,2 +1,7 @@
 cliente.xlsx
 cliente.xlsx:Zone.Identifier
+
+# Credenciales y artefactos locales de deploy a Netlify (no van al repo)
+.env.netlify
+.netlify/
+.deploy_tmp/
