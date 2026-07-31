@@ -57,11 +57,13 @@ def parsear_clientes(raw: str, hoy: date, cond_pago_map: dict) -> tuple[list, di
     # La columna "Cod Cliente" (número de cliente repetido en cada línea de
     # movimiento) es opcional: algunos reportes la incluyen antes del número
     # de línea del Concepto y otros no (p.ej. desde el reporte del 2026-07-29).
+    # Al final de la línea viene "Saldo Acum" (se descarta) y "Vend" (nro. de vendedor).
     line_re = re.compile(
         r'(\d{4}-\d{2}-\d{2})\s+(\S+)\s+(?:\d+\s+)?(\d+)\s+'
         r'(FAC-[AB]|NCR-[AB]|NDB-[AB]|DAJ|CAJ|COB-R)\s+'
         r'(\S+)\s+([A-Z0-9]+)\s+'
-        r'\$\s*([\-\d.,]+)\s+\$\s*([\-\d.,]+)\s+(\d*)\s*'
+        r'\$\s*([\-\d.,]+)\s+\$\s*([\-\d.,]+)\s+(\d*)\s+'
+        r'\$\s*[\-\d.,]+\s+(\d+)'
     )
 
     clientes = []
