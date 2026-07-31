@@ -2,9 +2,12 @@
 
 ## ¿Qué hace este proyecto?
 
-Toma un PDF de "Saldo Detallado por Cliente" generado por el sistema de DHN
-y produce un `index.html` interactivo con:
+Toma el PDF "Saldo Detallado por Cliente" de DHN y/o el Excel "Saldos
+Detallados por Cliente y Comprobante" de Deli, y produce un `index.html`
+interactivo con:
+- Pestañas para elegir la empresa (DHN / Deli), cada una con su propio filtro/orden
 - Grilla filtrable por semáforo (Crítico / Medio / A tiempo)
+- Número de vendedor al lado del número de cliente (solo DHN, Deli no lo informa)
 - Detalle de facturas por cliente expandible
 - Pestaña de NC antiguas (del mes anterior al de la corrida, o más viejas)
 - Exportación a Excel directamente desde el browser
@@ -17,10 +20,18 @@ El `index.html` resultante se sube a Netlify y se comparte como link.
 ## Uso diario (lo único que hay que hacer)
 
 ```bash
-python actualizar.py PDFCUENTASCORR7_17.pdf
+python actualizar.py PDFCUENTASCORR7_17.pdf CUENTACORRDELI7.17.xls
 ```
 
-Reemplazá `PDFCUENTASCORR7_17.pdf` por el nombre del PDF del día.
+Reemplazá los nombres por los archivos del día (el orden no importa, se
+distinguen por extensión: `.pdf` es DHN, `.xls`/`.xlsx` es Deli). Si un día
+solo llega uno de los dos, se puede pasar uno solo: el otro se conserva tal
+cual estaba en el `index.html` anterior.
+
+```bash
+python actualizar.py PDFCUENTASCORR7_17.pdf   # solo actualiza DHN, Deli queda igual
+```
+
 El script genera `index.html` en esta misma carpeta.
 
 ---
@@ -28,10 +39,10 @@ El script genera `index.html` en esta misma carpeta.
 ## Requisitos
 
 - Python 3.9+
-- `pdftotext` instalado (viene con `poppler-utils`)
+- `pdftotext` instalado (viene con `poppler-utils`), solo para el PDF de DHN
   - Mac: `brew install poppler`
   - Ubuntu/Debian: `sudo apt install poppler-utils`
-- Librerías Python: `pip install -r requirements.txt`
+- Librerías Python: `pip install -r requirements.txt` (incluye `xlrd` para leer el .xls de Deli)
 
 ---
 
@@ -59,7 +70,7 @@ tocar nada a mano.
 
 ## Cómo subir a Netlify
 
-1. Corrés `python actualizar.py PDF_DEL_DIA.pdf`
+1. Corrés `python actualizar.py PDF_DEL_DIA.pdf EXCEL_DELI_DEL_DIA.xls`
 2. Se genera `index.html` en esta carpeta
 3. Entrás a tu panel de Netlify → tu sitio → pestaña "Deploys"
 4. Arrastrás el `index.html` ahí
@@ -86,7 +97,7 @@ El score combina: monto vencido (hasta 50 pts) + días vencido (hasta 30 pts) + 
 
 **El PDF no parsea bien algún cliente**
 → Avisale a quien mantiene el script con el nombre del cliente y el número,
-  se puede ajustar el regex en `parsear_clientes()`.
+  se puede ajustar el regex en `parsear_clientes()` (DHN) o `parsear_deli()` (Deli).
 
 **Quiero cambiar el diseño del HTML**
 → Editá `build_pdf_grid.py` y volvé a correr `actualizar.py`.
