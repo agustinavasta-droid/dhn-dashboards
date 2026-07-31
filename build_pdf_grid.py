@@ -75,6 +75,8 @@ tbody tr.expanded{background:#f3f0fd;}
 td{padding:11px 16px;font-size:13.5px;vertical-align:middle;}
 td.num{text-align:right;font-variant-numeric:tabular-nums;font-weight:500;}
 td.cod{color:var(--soft);font-size:12.5px;}
+td.cod .cod-num{font-weight:800;color:var(--ink);font-size:13.5px;}
+td.cod .vendedor-tag{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:700;color:var(--soft);background:#f0edfa;border-radius:5px;padding:1px 6px;vertical-align:middle;}
 td.nombre{font-weight:600;}
 .neg{color:var(--red);}
 .pos{color:var(--green);}
@@ -207,7 +209,7 @@ tr.expanded .caret{transform:rotate(90deg);}
           <tr>
             <th data-key="cod" style="width:80px;">N\u00b0 <span class="arr">\u2195</span></th>
             <th data-key="nombre">Cliente <span class="arr">\u2195</span></th>
-            <th data-key="condPago" style="text-align:left;">Cond. Pago</th>
+            <th data-key="condPago" style="text-align:left;">Cond. Pago <span class="arr">↕</span></th>
             <th data-key="saldoVencidoNeto">Saldo Vencido <span class="arr">\u2195</span></th>
             <th data-key="maxDiasVenc">D\u00edas venc. <span class="arr">\u2195</span></th>
             <th data-key="porVencerTotal">Por vencer <span class="arr">\u2195</span></th>
@@ -366,7 +368,7 @@ function render(){
     const hasBadgePV=c.porVencerTotal>0;
     const hasNC=c.ncAlertas&&c.ncAlertas.length>0;
     tr.innerHTML=`
-      <td class="cod"><span class="caret">&#9658;</span>${c.cod}</td>
+      <td class="cod"><span class="caret">&#9658;</span><span class="cod-num">${c.cod}</span>${c.vendedor?'<span class="vendedor-tag">V'+c.vendedor+'</span>':''}</td>
       <td class="nombre">${c.nombre}${hasBadgeVenc?'<span class="badge venc">Vencido</span>':''}${hasBadgePV?'<span class="badge pv">Por vencer</span>':''}${hasNC?'<span class="badge nc">NC antigua</span>':''}</td>
       <td>${COND[c.condPago]||c.condPago}</td>
       <td><span class="semaforo ${c.semaforo==='rojo'?'sem-rojo':c.semaforo==='amarillo'?'sem-amarillo':'sem-verde'}"></span>${c.semaforo==='rojo'?'Crítico':c.semaforo==='amarillo'?'Medio':'A tiempo'}</td>
@@ -410,7 +412,12 @@ function render(){
   pager.innerHTML=`<button id="pb" ${state.page<=1?'disabled':''}>← Anterior</button><span>Pág. ${state.page}/${totalPages}</span><button id="nb" ${state.page>=totalPages?'disabled':''}>Siguiente →</button>`;
   document.getElementById('pb').addEventListener('click',()=>{state.page--;render();});
   document.getElementById('nb').addEventListener('click',()=>{state.page++;render();});
-  document.querySelectorAll('thead th').forEach(th=>th.classList.toggle('sorted',th.dataset.key===state.sortKey));
+  document.querySelectorAll('thead th').forEach(th=>{
+    const isSorted=th.dataset.key===state.sortKey;
+    th.classList.toggle('sorted',isSorted);
+    const arr=th.querySelector('.arr');
+    if(arr) arr.textContent=isSorted?(state.sortDir===1?'↑':'↓'):'↕';
+  });
 }
 
 document.querySelectorAll('thead th').forEach(th=>{

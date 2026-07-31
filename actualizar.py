@@ -99,6 +99,7 @@ def parsear_clientes(raw: str, hoy: date, cond_pago_map: dict) -> tuple[list, di
             cond_pago  = max(set(cond_pagos), key=cond_pagos.count) if cond_pagos else '-'
 
         movs = []
+        vend_counts = {}
         for m in line_re.finditer(block):
             importe_str = m.group(7).replace('.', '').replace(',', '.')
             try:
@@ -114,6 +115,13 @@ def parsear_clientes(raw: str, hoy: date, cond_pago_map: dict) -> tuple[list, di
                 'importe':    round(importe, 2),
                 'diasVenc':   int(m.group(9)) if m.group(9) else 0,
             })
+            vend = m.group(10)
+            if vend:
+                vend_counts[vend] = vend_counts.get(vend, 0) + 1
+
+        # El vendedor es (normalmente) el mismo en todas las líneas del cliente;
+        # por las dudas, si hubiera más de uno, nos quedamos con el más frecuente.
+        vendedor = max(vend_counts, key=vend_counts.get) if vend_counts else None
 
         facturas  = [m for m in movs if m['tipo'].startswith('FAC')]
         ncs       = [m for m in movs if m['tipo'].startswith('NCR') or m['tipo'].startswith('NDB')]
@@ -155,6 +163,7 @@ def parsear_clientes(raw: str, hoy: date, cond_pago_map: dict) -> tuple[list, di
         clientes.append({
             'cod':             cod,
             'nombre':          nombre,
+            'vendedor':        vendedor,
             'totalGeneral':    round(total_general, 2),
             'condPago':        cond_pago,
             'totalNC':         round(total_nc, 2),
