@@ -20,7 +20,8 @@ html = r"""<!DOCTYPE html>
   --danger-bg:#fef2f2;--warning-bg:#fffbeb;
 }
 *{box-sizing:border-box;margin:0;padding:0;}
-body{min-height:100vh;background:linear-gradient(135deg,var(--v1) 0%,var(--v2) 50%,var(--v3) 100%);background-attachment:fixed;font-family:'Inter',sans-serif;color:var(--ink);padding:36px 20px 60px;}
+body{min-height:100vh;background:linear-gradient(135deg,var(--v1) 0%,var(--v2) 50%,var(--v3) 100%);background-attachment:fixed;font-family:'Inter',sans-serif;color:var(--ink);padding:36px 20px 60px;transition:background .25s;}
+body.empresa-deli{background:linear-gradient(135deg,#064e3b 0%,#047857 50%,#10b981 100%);}
 .wrap{max-width:1200px;margin:0 auto;}
 
 /* Header */
@@ -288,6 +289,7 @@ function renderCompanyTabs(){
 }
 
 function onEmpresaChange(){
+  document.body.classList.toggle('empresa-deli', currentEmpresa==='deli');
   renderCompanyTabs();
   renderMasthead();
   poblarCondFilter();
@@ -516,6 +518,7 @@ function updateTotales(filtered){
 }
 
 // ---- INIT ----
+document.body.classList.toggle('empresa-deli', currentEmpresa==='deli');
 renderCompanyTabs();
 renderMasthead();
 poblarCondFilter();
