@@ -291,6 +291,109 @@ def parsear_deli(xls_path: str, hoy: date) -> tuple[list, dict]:
     return clientes, totales
 
 
+def parsear_deli_pdf(raw: str, hoy: date) -> tuple[list, dict]:
+    """Deli: parsea el texto extraído (pdftotext -layout) del PDF "Saldos
+    Detallados por Cliente y Comprobante" y devuelve (clientes, totales).
+
+    Mismo reporte de Crystal Reports que el .xls viejo (ver parsear_deli),
+    exportado ahora como PDF. A diferencia del .xls, sí trae "Fecha Mov." y
+    "FechaVenc" por movimiento (las dos fechas que aparecen en cada línea;
+    "Fecha orig." queda siempre en blanco). El encabezado de cada cliente se
+    repite al cortar página en medio de sus movimientos, así que los bloques
+    se agrupan por código de cliente en vez de asumir uno por encabezado.
+    """
+    cutoff_nc_alert = date(hoy.year, hoy.month, 1)
+
+    # Cuando "Fecha Mov." no entra en su columna, pdftotext la deja sola en
+    # una línea y "FechaVenc" + el resto del movimiento pasan a la siguiente.
+    raw = re.sub(
+        r'(\d{1,2}/\d{1,2}/\d{4})[ \t]*\n[ \t]*(\d{1,2}/\d{1,2}/\d{4}\s+\S)',
+        r'\1 \2', raw,
+    )
+
+    header_re = re.compile(r'^(\d[\d.]*)\s{2,}(\S.*?)\s{2,}(\S.*)$', re.MULTILINE)
+    mov_re = re.compile(
+        r'^\s*(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}/\d{1,2}/\d{4})\s+(?:\d+\s+)?(\S+)\s+'
+        r'([\-\d.,]+)\s+([\-\d.,]+)\s+([\-\d.,]+)\s+([\-\d.,]+)(?:\s*[A-Z]+)?\s+(\d+)\s*$',
+        re.MULTILINE,
+    )
+
+    def to_float(s):
+        return round(float(s.replace('.', '').replace(',', '.')), 2)
+
+    def fecha_iso(s):
+        d, m, y = s.split('/')
+        return date(int(y), int(m), int(d)).isoformat()
+
+    headers = list(header_re.finditer(raw))
+    por_cliente = {}   # cod -> {'nombre', 'total', 'facturas', 'ncs'}
+    orden = []
+
+    for i, hm in enumerate(headers):
+        cod = hm.group(1).replace('.', '')
+        nombre = hm.group(2).strip().lstrip('@').strip()
+        inicio = hm.end()
+        fin = headers[i + 1].start() if i + 1 < len(headers) else len(raw)
+        block = raw[inicio:fin]
+
+        entry = por_cliente.get(cod)
+        if entry is None:
+            entry = {'nombre': nombre, 'total': None, 'facturas': [], 'ncs': []}
+            por_cliente[cod] = entry
+            orden.append(cod)
+
+        # La línea de dirección, justo debajo del encabezado, termina con el
+        # total general del cliente (se repite igual en cada continuación).
+        lineas = block.split('\n')
+        for linea in lineas[1:3]:
+            if not linea.strip() or mov_re.match(linea):
+                continue
+            tot_m = re.search(r'([\-\d.,]+)\s*$', linea.strip())
+            if tot_m:
+                try:
+                    entry['total'] = to_float(tot_m.group(1))
+                except ValueError:
+                    pass
+            break
+
+        for m in mov_re.finditer(block):
+            fecha_mov  = fecha_iso(m.group(1))
+            fecha_venc = fecha_iso(m.group(2))
+            comp = m.group(3).strip()
+            try:
+                importe = to_float(m.group(4))
+            except ValueError:
+                continue
+            tipo_m = re.match(r'^([A-Za-z]+)', comp)
+            mov = {
+                'fechaComp': fecha_mov,
+                'fechaVenc': fecha_venc,
+                'tipo':      tipo_m.group(1) if tipo_m else '-',
+                'nro':       comp,
+                'condPago':  '-',
+                'importe':   importe,
+            }
+            if importe >= 0:
+                fv = datetime.strptime(fecha_venc, '%Y-%m-%d').date()
+                mov['diasVenc'] = max(0, (hoy - fv).days)
+                entry['facturas'].append(mov)
+            else:
+                entry['ncs'].append(mov)
+
+    clientes = []
+    for cod in orden:
+        entry = por_cliente[cod]
+        total_general = entry['total']
+        if total_general is None:
+            total_general = sum(f['importe'] for f in entry['facturas']) + \
+                             sum(n['importe'] for n in entry['ncs'])
+        clientes.append(armar_cliente(cod, entry['nombre'], None, '-', total_general,
+                                       entry['facturas'], entry['ncs'], cutoff_nc_alert))
+
+    totales = calcular_totales(clientes, hoy)
+    return clientes, totales
+
+
 def cargar_empresas_previas() -> dict:
     """Si ya existe un index.html, recupera los datos embebidos por empresa
     para no perderlos cuando esta corrida solo trae el archivo de una de las
@@ -358,29 +461,44 @@ def main():
 
         ext = path.suffix.lower()
         if ext == '.pdf':
-            cond_pago_map = cargar_condiciones_pago(CLIENTES_XLSX)
-            if cond_pago_map:
-                print(f"📇 Condición de pago cargada desde {CLIENTES_XLSX.name}: {len(cond_pago_map)} clientes")
-            else:
-                print(f"⚠️  No se encontró {CLIENTES_XLSX.name}, se usa el heurístico del PDF para cond. de pago")
-
-            print(f"📄 Leyendo PDF DHN: {path_str}")
             raw = extraer_texto(path_str)
-            print("⚙️  Procesando clientes DHN...")
-            clientes, totales = parsear_clientes(raw, hoy, cond_pago_map)
-            empresas['dhn'] = {'label': EMPRESAS['dhn']['label'], 'clientes': clientes, 'totales': totales}
+            # El PDF de Deli ("Saldos Detallados por Cliente y Comprobante")
+            # y el de DHN ("Saldo Detallado por Cliente") comparten extensión
+            # desde que Deli también empezó a exportar en PDF; se distinguen
+            # por el título del reporte.
+            es_deli = 'Saldos Detallados por Cliente y Comprobante' in raw
+
+            if es_deli:
+                print(f"📄 Leyendo PDF Deli: {path_str}")
+                print("⚙️  Procesando clientes Deli...")
+                clientes, totales = parsear_deli_pdf(raw, hoy)
+                empresas['deli'] = {'label': EMPRESAS['deli']['label'], 'clientes': clientes, 'totales': totales}
+                empresa_actual = 'deli'
+            else:
+                cond_pago_map = cargar_condiciones_pago(CLIENTES_XLSX)
+                if cond_pago_map:
+                    print(f"📇 Condición de pago cargada desde {CLIENTES_XLSX.name}: {len(cond_pago_map)} clientes")
+                else:
+                    print(f"⚠️  No se encontró {CLIENTES_XLSX.name}, se usa el heurístico del PDF para cond. de pago")
+
+                print(f"📄 Leyendo PDF DHN: {path_str}")
+                print("⚙️  Procesando clientes DHN...")
+                clientes, totales = parsear_clientes(raw, hoy, cond_pago_map)
+                empresas['dhn'] = {'label': EMPRESAS['dhn']['label'], 'clientes': clientes, 'totales': totales}
+                empresa_actual = 'dhn'
 
         elif ext in ('.xls', '.xlsx'):
             print(f"📄 Leyendo Excel Deli: {path_str}")
             print("⚙️  Procesando clientes Deli...")
             clientes, totales = parsear_deli(path_str, hoy)
             empresas['deli'] = {'label': EMPRESAS['deli']['label'], 'clientes': clientes, 'totales': totales}
+            empresa_actual = 'deli'
 
         else:
             print(f"❌ Extensión no reconocida para {path_str} (se espera .pdf o .xls/.xlsx)")
             sys.exit(1)
 
-        totales_actual = empresas['dhn']['totales'] if ext == '.pdf' else empresas['deli']['totales']
+        totales_actual = empresas[empresa_actual]['totales']
         print(f"✅ {totales_actual['clientes']} clientes · {totales_actual['conVencido']} con vencido · {totales_actual['conNcAlerta']} con NC antiguas")
         print(f"💰 Total vencido neto: ${totales_actual['totalVencidoNeto']:,.2f}")
 
