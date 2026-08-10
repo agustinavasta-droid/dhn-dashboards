@@ -438,6 +438,12 @@ function render(){
       const ncRows=c.ncs&&c.ncs.length?c.ncs.map(n=>`<div class="nc-item"><span>${n.antigua?'<span class="mini-badge">Antigua</span>':''}${n.nro} &middot; ${fmt(n.fechaComp)}</span><span>${money(n.importe)}</span></div>`).join(''):'<div class="empty">Sin NC.</div>';
       const brutoVenc=c.vencidas.reduce((s,f)=>s+f.importe,0);
       dtr.innerHTML=`<td colspan="7"><div class="detail-inner">
+        <div style="grid-column:1/-1;display:flex;justify-content:flex-end;margin-bottom:-8px;">
+          <button class="chip export-btn" onclick="event.stopPropagation();descargarPdfCliente('${c.cod}')">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="vertical-align:-2px;margin-right:4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Descargar PDF
+          </button>
+        </div>
         <div class="det-col venc">
           <h4>Facturas Vencidas (${c.vencidas.length})</h4>
           ${facTable(c.vencidas,'venc')}
@@ -568,8 +574,113 @@ function exportExcel(){
   XLSX.utils.book_append_sheet(wb, ws2, 'Resumen');
   XLSX.writeFile(wb, 'CuentasCorrientes_' + label.replace(/\s+/g,'') + '_' + fechaReporte + '.xlsx');
 }
+
+// ---- PDF POR CLIENTE ----
+function ensureSpace(doc, y, needed){
+  if(y + needed > 280){ doc.addPage(); return 20; }
+  return y;
+}
+
+function descargarPdfCliente(cod){
+  const c = clientesActuales().find(x=>x.cod===cod);
+  if(!c) return;
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const label = DATA[currentEmpresa].label;
+  const fechaReporte = totalesActuales().fecha;
+
+  doc.setFontSize(15);
+  doc.setFont(undefined,'bold');
+  doc.text(label + ' · Estado de Cuenta Corriente', 14, 17);
+  doc.setFontSize(9.5);
+  doc.setFont(undefined,'normal');
+  doc.text('Fecha de reporte: ' + fmt(fechaReporte), 14, 23);
+
+  doc.setFontSize(12.5);
+  doc.setFont(undefined,'bold');
+  doc.text(`${c.cod} — ${c.nombre}`, 14, 33);
+  doc.setFontSize(9.5);
+  doc.setFont(undefined,'normal');
+  let y = 40;
+  let linea = `Condición de pago: ${COND[c.condPago]||c.condPago}`;
+  if(c.vendedor) linea += `      Vendedor: ${c.vendedor}`;
+  doc.text(linea, 14, y);
+  y += 6;
+  doc.text(`Total general de la cuenta: ${money(c.totalGeneral)}`, 14, y);
+  y += 10;
+
+  if(c.vencidas.length){
+    y = ensureSpace(doc, y, 20);
+    doc.setFontSize(10.5); doc.setFont(undefined,'bold');
+    doc.text(`Facturas vencidas (${c.vencidas.length})`, 14, y);
+    doc.autoTable({
+      startY: y + 3,
+      head: [['Comprobante','F. Comprob.','F. Vencimiento','Días venc.','Importe']],
+      body: c.vencidas.map(f=>[f.nro, fmt(f.fechaComp), fmt(f.fechaVenc), String(f.diasVenc), money(f.importe)]),
+      headStyles: {fillColor:[220,38,38]},
+      styles: {fontSize:8},
+      margin: {left:14, right:14},
+    });
+    y = doc.lastAutoTable.finalY + 10;
+  }
+
+  if(c.porVencer.length){
+    y = ensureSpace(doc, y, 20);
+    doc.setFontSize(10.5); doc.setFont(undefined,'bold');
+    doc.text(`Por vencer (${c.porVencer.length})`, 14, y);
+    doc.autoTable({
+      startY: y + 3,
+      head: [['Comprobante','F. Comprob.','F. Vencimiento','Importe']],
+      body: c.porVencer.map(f=>[f.nro, fmt(f.fechaComp), fmt(f.fechaVenc), money(f.importe)]),
+      headStyles: {fillColor:[217,119,6]},
+      styles: {fontSize:8},
+      margin: {left:14, right:14},
+    });
+    y = doc.lastAutoTable.finalY + 10;
+  }
+
+  if(c.ncs && c.ncs.length){
+    y = ensureSpace(doc, y, 20);
+    doc.setFontSize(10.5); doc.setFont(undefined,'bold');
+    doc.text(`Notas de crédito (${c.ncs.length})`, 14, y);
+    doc.autoTable({
+      startY: y + 3,
+      head: [['Comprobante','Fecha','Importe']],
+      body: c.ncs.map(n=>[n.nro, fmt(n.fechaComp), money(n.importe)]),
+      headStyles: {fillColor:[133,77,14]},
+      styles: {fontSize:8},
+      margin: {left:14, right:14},
+    });
+    y = doc.lastAutoTable.finalY + 10;
+  }
+
+  if(!c.vencidas.length && !c.porVencer.length && !(c.ncs&&c.ncs.length)){
+    doc.setFontSize(10);
+    doc.text('Sin movimientos.', 14, y);
+    y += 10;
+  }
+
+  y = ensureSpace(doc, y, 30);
+  const brutoVenc = c.vencidas.reduce((s,f)=>s+f.importe,0);
+  doc.autoTable({
+    startY: y,
+    body: [
+      ['Bruto vencido', money(brutoVenc)],
+      ['NC aplicadas', money(c.totalNC)],
+      ['Saldo vencido neto', money(c.saldoVencidoNeto)],
+      ['Por vencer', money(c.porVencerTotal)],
+    ],
+    theme: 'plain',
+    styles: {fontSize:10, fontStyle:'bold'},
+    margin: {left:14, right:14},
+  });
+
+  doc.save(`CtaCte_${label.replace(/\s+/g,'')}_${c.cod}_${fechaReporte}.pdf`);
+}
 </script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.js"></script>
 </body>
 </html>"""
 
