@@ -5,3 +5,10 @@ cliente.xlsx:Zone.Identifier
 .env.netlify
 .netlify/
 .deploy_tmp/
+.env
+
+# Dependencias de las Netlify Functions (se instalan solas en el build)
+node_modules/
+deno.lock
+netlify/functions/*.zip
+netlify/functions/manifest.json

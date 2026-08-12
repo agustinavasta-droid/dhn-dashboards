@@ -1,0 +1,11 @@
+{
+  "name": "dhn-dashboards",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Netlify Functions para actualizar los dashboards DHN/Deli desde la web",
+  "dependencies": {
+    "pdfjs-dist": "^4.0.379",
+    "xlsx": "^0.18.5"
+  }
+}

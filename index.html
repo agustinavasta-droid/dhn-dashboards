@@ -139,6 +139,19 @@ tr.expanded .caret{transform:rotate(90deg);}
 #ncPanel.visible{display:block;}
 #mainPanel{display:block;}
 #mainPanel.hidden{display:none;}
+
+/* Upload section */
+.upload-section{max-width:1200px;margin:0 auto 22px;background:rgba(255,255,255,.13);backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,.22);border-radius:14px;padding:16px 18px;}
+.upload-section h3{font-size:11.5px;letter-spacing:.07em;text-transform:uppercase;color:rgba(255,255,255,.85);font-weight:700;margin-bottom:10px;}
+.upload-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;}
+.upload-row input[type=password]{font-family:'Inter',sans-serif;font-size:13px;padding:8px 12px;border-radius:9px;border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.9);color:var(--ink);min-width:180px;}
+.upload-btn{position:relative;overflow:hidden;display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;padding:8px 15px;border-radius:9px;border:2px solid rgba(255,255,255,.5);background:rgba(255,255,255,.12);color:#fff;cursor:pointer;transition:all .15s;}
+.upload-btn:hover{border-color:#fff;background:rgba(255,255,255,.22);}
+.upload-btn input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;}
+.upload-btn.busy{opacity:.6;pointer-events:none;}
+.upload-status{font-size:12.5px;color:rgba(255,255,255,.9);font-weight:600;min-height:16px;}
+.upload-status.ok{color:#86efac;}
+.upload-status.err{color:#fca5a5;}
 </style>
 </head>
 <body>
@@ -155,6 +168,24 @@ tr.expanded .caret{transform:rotate(90deg);}
   </div>
 
   <div class="tabs tabs-company" id="companyTabs"></div>
+
+  <div class="upload-section">
+    <h3>Actualizar datos</h3>
+    <div class="upload-row">
+      <input type="password" id="uploadPass" placeholder="Contraseña">
+      <label class="upload-btn" id="btnDhn">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Subir PDF nuevo (DHN)
+        <input type="file" id="fileDhn" accept=".pdf">
+      </label>
+      <label class="upload-btn" id="btnDeli">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Subir XLS nuevo (Deli)
+        <input type="file" id="fileDeli" accept=".xls,.xlsx">
+      </label>
+      <span class="upload-status" id="uploadStatus"></span>
+    </div>
+  </div>
 
   <div class="stats">
     <div class="stat"><span class="lbl">Total Vencido (neto NC)</span><div class="val" id="sVencido"></div></div>
@@ -670,6 +701,63 @@ function descargarPdfCliente(cod){
 
   doc.save(`CtaCte_${label.replace(/\s+/g,'')}_${c.cod}_${fechaReporte}.pdf`);
 }
+
+// ---- UPLOAD FORM ----
+function fileToBase64(file){
+  return new Promise((resolve,reject)=>{
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function setUploadStatus(msg, cls){
+  const el = document.getElementById('uploadStatus');
+  el.textContent = msg;
+  el.className = 'upload-status' + (cls ? ' '+cls : '');
+}
+
+async function subirArchivo(empresa, file, btnEl){
+  const pass = document.getElementById('uploadPass').value;
+  if(!pass){ setUploadStatus('Ingresá la contraseña antes de subir el archivo.', 'err'); return; }
+  const MAX_BYTES = 4*1024*1024;
+  if(file.size > MAX_BYTES){
+    setUploadStatus('Archivo muy grande para el formulario web (máx. 4MB). Usá el flujo local (actualizar.py).', 'err');
+    return;
+  }
+  btnEl.classList.add('busy');
+  setUploadStatus('Actualizando…');
+  try{
+    const contentBase64 = await fileToBase64(file);
+    const resp = await fetch('/.netlify/functions/actualizar-' + empresa, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ password: pass, filename: file.name, contentBase64 }),
+    });
+    const data = await resp.json().catch(()=>({ok:false,error:'Respuesta inválida del servidor.'}));
+    if(resp.ok && data.ok){
+      setUploadStatus('Listo, el sitio se actualizará en unos minutos.', 'ok');
+    } else {
+      setUploadStatus(data.error || 'No se pudo actualizar. Intentá de nuevo.', 'err');
+    }
+  } catch(e){
+    setUploadStatus('Error de conexión. Intentá de nuevo.', 'err');
+  } finally {
+    btnEl.classList.remove('busy');
+  }
+}
+
+document.getElementById('fileDhn').addEventListener('change', e=>{
+  const file = e.target.files[0];
+  e.target.value = '';
+  if(file) subirArchivo('dhn', file, document.getElementById('btnDhn'));
+});
+document.getElementById('fileDeli').addEventListener('change', e=>{
+  const file = e.target.files[0];
+  e.target.value = '';
+  if(file) subirArchivo('deli', file, document.getElementById('btnDeli'));
+});
 </script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>

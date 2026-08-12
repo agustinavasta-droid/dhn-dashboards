@@ -1,0 +1,13 @@
+[build]
+  publish = "."
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+  included_files = ["template.html"]
+
+[functions."actualizar-dhn"]
+  timeout = 26
+
+[functions."actualizar-deli"]
+  timeout = 26
