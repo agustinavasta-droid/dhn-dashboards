@@ -66,6 +66,22 @@ primer día del mes en curso. Es decir, cualquier NC emitida antes de ese mes
 (el mes anterior o más vieja) aparece en la pestaña de alerta. No hace falta
 tocar nada a mano.
 
+### Condición de pago de DHN
+
+`cliente.xlsx` (hoja `clientes`, columnas `codigo` y `codigoCondicionPago`)
+es la fuente correcta; si un cliente no está ahí, se cae al heurístico viejo
+(busca CON/07D/14D/etc. en el bloque del PDF, que puede pifiarle si el
+cliente tiene facturas con más de una condición mezcladas).
+
+Cada corrida de `actualizar.py` vuelca ese mapa (sin datos personales, solo
+código → condición) a `netlify/functions/lib/cond-pago-dhn.json`, que sí se
+versiona — `cliente.xlsx` no, porque tiene domicilios/teléfonos/CUIT. Así la
+carga web (Netlify Function, que no tiene `cliente.xlsx` disponible en el
+servidor) usa la misma condición de pago que el flujo local en vez de caer
+siempre al heurístico. Si `cliente.xlsx` cambia, corré `actualizar.py` una
+vez (aunque sea solo con el PDF) para refrescar ese JSON y subilo con el
+resto del deploy.
+
 ---
 
 ## Cómo subir a Netlify

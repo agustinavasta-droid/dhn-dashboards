@@ -19,6 +19,7 @@ from pathlib import Path
 # ── CONFIG ──────────────────────────────────────────────────────────────────
 OUTPUT_HTML     = Path("index.html")
 CLIENTES_XLSX   = Path(__file__).parent / "cliente.xlsx"
+COND_PAGO_JSON  = Path(__file__).parent / "netlify" / "functions" / "lib" / "cond-pago-dhn.json"
 
 EMPRESAS = {
     'dhn':  {'label': 'DHN Distribuciones'},
@@ -42,6 +43,16 @@ def cargar_condiciones_pago(xlsx_path: Path) -> dict:
         for row in rows
         if row[idx_cod] is not None and row[idx_cp]
     }
+
+
+def exportar_condiciones_pago(cond_pago_map: dict, json_path: Path) -> None:
+    """Vuelca {codigo: condicionPago} a un JSON chico (sin PII) que sí se
+    versiona, para que la Netlify Function de carga web (que no tiene
+    cliente.xlsx disponible en el servidor) pueda usar la misma condición de
+    pago que el flujo local en vez de su heurístico de respaldo."""
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    ordenado = dict(sorted(cond_pago_map.items(), key=lambda kv: int(kv[0]) if kv[0].isdigit() else kv[0]))
+    json_path.write_text(json.dumps(ordenado, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 
 
 def extraer_texto(pdf_path: str) -> str:
@@ -478,6 +489,8 @@ def main():
                 cond_pago_map = cargar_condiciones_pago(CLIENTES_XLSX)
                 if cond_pago_map:
                     print(f"📇 Condición de pago cargada desde {CLIENTES_XLSX.name}: {len(cond_pago_map)} clientes")
+                    exportar_condiciones_pago(cond_pago_map, COND_PAGO_JSON)
+                    print(f"📤 Volcado a {COND_PAGO_JSON.relative_to(Path(__file__).parent)} (para la carga web)")
                 else:
                     print(f"⚠️  No se encontró {CLIENTES_XLSX.name}, se usa el heurístico del PDF para cond. de pago")
 
